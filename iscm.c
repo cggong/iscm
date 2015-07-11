@@ -1,9 +1,11 @@
 #include "lex.h"
 #include "types.h"
+#include "eval.h"
 #include <stdio.h>
 
 int main(void) {
-  char* cmd = "(+ 1 (* 3 (/ 9 6)))";
+  char* cmd = "(* 2 3 5 7 (+ 1 (* 3 5 2 3 5)))";
+    //"(* 3 5)"; 
     //"(define (square x) (* x x))"; 
   char** toks = lex(cmd);
   /*
@@ -13,7 +15,10 @@ int main(void) {
     printf("%s\n", tok);
   }
   */
-  tree* syn = init_tree(toks);
-  desymbolize_tree(syn); 
-  print_tree(syn); 
+  obj* syn = read_toks(toks);
+  print_obj(syn);
+  obj* result = eval(syn);
+  print_obj(result); 
+  //desymbolize_tree(syn); 
+  //print_tree(syn); 
 } 

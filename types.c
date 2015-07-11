@@ -20,58 +20,44 @@ obj* init_obj(lsp_type type, void* contents) {
 }
 
 obj* init_symbol(const char* name) {
-  return init_obj(ATOM_SYMBOL, init_str(name));
+  obj* o = init_obj(ATOM_SYMBOL, init_str(name));
+  desymbolize_obj(o);
+  return o; 
 }
 
-tree* init_tree_bare(tree* parent, obj* o) {
-  tree* new_tree = calloc(1, sizeof(tree));
-  new_tree->o = o;
-  new_tree->parent = parent; 
-  return new_tree;
-}
-
-void append_tree_with_subtree(tree* t, tree* subtree) {
-  tree* child = t->first_child; 
-  if (child) {
-    while (child->next_sibling) child = child->next_sibling;
-    child->next_sibling = subtree; 
-  } else {
-    t->first_child = subtree; 
-  }
+obj* init_number(double d) {
+  double* new_d = malloc(sizeof(double));
+  *new_d = d;
+  return init_obj(ATOM_NUMBER, new_d);
 } 
 
 static int scan_ind = 0; 
 
-/* Takes in an array of lexed symbols, and output AST. 
+/* Takes in an array of lexed symbols, and output the code as data. 
  */
-tree* init_tree_recur(tree* parent, char** toks) {
-  tree* t;
-  #ifdef DEBUG
-  printf("call init_tree_recur, scan_ind at \"%s\".\n", toks[scan_ind]);
-  #endif
+
+obj* read_toks_recur(char** toks) {
+  obj* o;
+  DBG(("call read_toks_recur, scan_ind at \"%s\".\n", toks[scan_ind])); 
   switch (toks[scan_ind][0]) {
   case '(':
-    DBG(("subtree root at \"%s\".\n", toks[scan_ind+1])); 
-    t = init_tree_bare(parent, init_symbol(toks[++scan_ind]));
+    o = init_list(init_symbol(toks[++scan_ind]));
     scan_ind++; 
     while (toks[scan_ind][0] != ')') {
-      #ifdef DEBUG
-      printf("continue exploring \"%s\".\n", toks[scan_ind]);
-      #endif
-      append_tree_with_subtree(t, init_tree_recur(t, toks));
+      o = append_obj(o, read_toks_recur(toks));
     }
     scan_ind++; //scan over the right paren.
     break;
   default:
-    t = init_tree_bare(parent, init_symbol(toks[scan_ind++]));
+    o = init_symbol(toks[scan_ind++]);
   }
-  return t;
+  return o;
 }
 
-tree* init_tree(char** toks) {
+obj* read_toks(char** toks) {
   scan_ind = 0;
-  return init_tree_recur(NULL, toks);
-}
+  return read_toks_recur(toks);
+} 
 
 void printf_ind(int print_ind, const char* restrict format, ...) {
   for (int i = 0; i < print_ind; i++) printf("  ");
@@ -81,29 +67,43 @@ void printf_ind(int print_ind, const char* restrict format, ...) {
   va_end(args); 
 } 
 
-void print_tree_recur(tree* t, int print_ind) {
-  switch (t->o->type) {
+void print_obj_recur(int p_ind, obj* o) {
+  obj* b = cdr(o);
+  switch (o->type) {
   case ATOM_NUMBER:
-    printf_ind(print_ind, "%lf\n", *(double*)t->o->contents);
+    printf_ind(p_ind, "%lf\n", *(double*)o->contents);
     break;
+  case PAIR:
+    printf_ind(p_ind, "(\n");
+    if (b->type == ATOM_NIL) {
+      print_obj_recur(p_ind + 1, car(o)); 
+      /* A list with one element */
+    } else if (b->type != PAIR) {
+      /* A cons */
+      print_obj_recur(p_ind + 1, car(o)); 
+      printf_ind(p_ind, ".");
+      print_obj_recur(p_ind + 1, cdr(o));
+    } else {
+      /* A list */
+      for (obj* iter = o; iter->type != ATOM_NIL; iter = cdr(iter)) {
+	print_obj_recur(p_ind + 1, car(iter));
+	if ((cdr(iter)->type != PAIR)
+	    && (cdr(iter)->type != ATOM_NIL)) {
+	  printf_ind(p_ind, ".");
+	  print_obj_recur(p_ind + 1, cdr(o));
+	}
+      } 
+    }
+    printf_ind(p_ind, ")\n"); 
+    break; 
   default:
-    printf_ind(print_ind, "%s\n", t->o->contents);
-  } 
-  for (tree* child = t->first_child; child != NULL; child = child->next_sibling) {
-    print_tree_recur(child, print_ind + 1); 
+    printf_ind(p_ind, "%s\n", o->contents);
   }
 }
 
-void print_tree(tree* t) {
-  print_tree_recur(t, 0);
+void print_obj(obj* o) {
+  print_obj_recur(0, o);
 } 
-
-obj* init_cons(obj* car, obj* cdr) {
-  cons* c = malloc(sizeof(cons));
-  c->car = car;
-  c->cdr = cdr;
-  return init_obj(CONS, c);
-}
 
 int is_nil(obj* o) {
   return o->type == ATOM_NIL;
@@ -133,9 +133,45 @@ void desymbolize_obj(obj* o) {
   }
 }   
 
-void desymbolize_tree(tree* t) {
-  desymbolize_obj(t->o);
-  for (tree* child = t->first_child; child != NULL; child = child->next_sibling) {
-    desymbolize_tree(child);
+obj* cons(obj* a, obj* b) {
+  pair* new_pair = malloc(sizeof(pair));
+  new_pair->a = a;
+  new_pair->b = b;
+  return init_obj(PAIR, new_pair);
+} 
+
+int is_atom(obj* o) {
+  return o->type != PAIR;
+}
+
+obj* car(obj* o) {
+  return ((pair*)o->contents)->a;
+} 
+
+obj* cdr(obj* o) {
+  return ((pair*)o->contents)->b; 
+} 
+
+obj* init_list(obj* o) {
+  return cons(o, init_nil());
+} 
+
+obj* append(obj* x, obj* y) {
+  if (is_nil(x)) {
+    return y;
+  } else {
+    return cons(car(x), append(cdr(x), y));
   }
+} 
+
+obj* append_obj(obj* x, obj* y) {
+  return append(x, init_list(y));
+} 
+
+int length(obj* o) {
+  int len = 0; 
+  for (obj* iter = o; o->type != ATOM_NIL; o = cdr(o)) {
+    len++;
+  }
+  return len;
 } 
